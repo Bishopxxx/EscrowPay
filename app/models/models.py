@@ -19,6 +19,9 @@ class DealStatus(enum.Enum):
     REFUNDED = "REFUNDED"
     EXPIRED = "EXPIRED"
 
+class DealOriginator(enum.Enum):
+    BUYER = "BUYER"
+    SELLER = "SELLER"
 
 class TransactionDirection(enum.Enum):
     INBOUND = "INBOUND"
