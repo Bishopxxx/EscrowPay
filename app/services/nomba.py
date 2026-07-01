@@ -35,7 +35,7 @@ async def get_headers() -> dict:
     token = await get_access_token()
     return {
         "Authorization": f"Bearer {token}",
-        "accountId": settings.NOMBA_PARENT_ACCOUNT_ID,
+        "accountId": settings.NOMBA_SUB_ACCOUNT_ID,
         "Content-Type": "application/json"
     }
 
