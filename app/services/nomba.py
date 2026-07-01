@@ -13,15 +13,19 @@ async def get_access_token() -> str:
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{BASE_URL}/v1/auth/token/issue",
+            headers ={
+                "Content-Type":"application/json",
+                "accountId":settings.NOMBA_PARENT_ACCOUNT_ID
+            },
             json={
                 "client_id": settings.NOMBA_CLIENT_ID,
-                "client_secret": settings.NOMBA_PRIVATE_KEY,
+                "client_secret":settings.NOMBA_PRIVATE_KEY,
                 "grant_type": "client_credentials"
             }
         )
         response.raise_for_status()
         data = response.json()["data"]
-        _token_cache["token"] = data["accessToken"]
+        _token_cache["token"] = data["access_token"]
         # 
         _token_cache["expires_at"] = time.time() + 1800
         return _token_cache["token"]
