@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 import enum
+from typing import Optional
 
 
 class DealStatus(enum.Enum):
@@ -52,8 +53,9 @@ class Deal(Base):
     __tablename__ = "deals"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    buyer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    seller_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    buyer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    seller_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    originator: Mapped [DealOriginator] = mapped_column(SAEnum(DealOriginator),nullable=False)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     funded_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
@@ -63,8 +65,8 @@ class Deal(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    buyer:Mapped["User"] = relationship("User", foreign_keys=[buyer_id], back_populates="deals_as_buyer")
-    seller:Mapped["User"] = relationship("User", foreign_keys=[seller_id], back_populates="deals_as_seller")
+    buyer:Mapped[Optional["User"]] = relationship("User", foreign_keys=[buyer_id], back_populates="deals_as_buyer")
+    seller:Mapped[Optional["User"]] = relationship("User", foreign_keys=[seller_id], back_populates="deals_as_seller")
     transactions:Mapped[list["Transaction"]] = relationship("Transaction", back_populates="deal")
 
 
