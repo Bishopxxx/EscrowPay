@@ -39,7 +39,7 @@ async def create_frictionless_deal(payload: DealCreate, db: AsyncSession = Depen
 
     try:
         nomba_data = await create_virtual_account(account_ref, account_name)
-        v_account = nomba_data.get("accountNumber")
+        v_account = nomba_data.get("bankAccountNumber")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Nomba virtual account provisioning failed: {str(e)}")
 
