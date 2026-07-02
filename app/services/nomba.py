@@ -51,7 +51,10 @@ async def create_virtual_account(account_ref: str, account_name: str) -> dict:
                 "currency": "NGN"
             }
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Nomba VA creation failed [{response.status_code}]: {response.text}"
+            )
         return response.json()["data"]
 
 
