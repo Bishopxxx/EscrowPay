@@ -53,8 +53,9 @@ async def create_virtual_account(account_ref: str, account_name: str) -> dict:
             }
         )
         response.raise_for_status()
-        return response.json()["data"]
-        
+        data = response.json()
+        print(f"VA response:{data}")
+        return data.get("data",{})        
 
 
 async def lookup_bank_account(account_number: str, bank_code: str) -> dict:
