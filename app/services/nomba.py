@@ -41,12 +41,6 @@ async def get_headers() -> dict:
 
 
 async def create_virtual_account(account_ref: str, account_name: str) -> dict:
-    # TEMPORARY MOCK - to be removed when 403 resolves
-    return{
-        "accountNumber": f"990{account_ref[-7:]}",
-        "accountName": account_name,
-        "bankName": "NOMBA MFB"
-    }
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{BASE_URL}/v1/accounts/virtual",
