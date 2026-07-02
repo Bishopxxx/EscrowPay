@@ -35,7 +35,7 @@ async def get_headers() -> dict:
     token = await get_access_token()
     return {
         "Authorization": f"Bearer {token}",
-        "accountId": settings.NOMBA_SUB_ACCOUNT_ID,
+        "accountId": settings.NOMBA_PARENT_ACCOUNT_ID,
         "Content-Type": "application/json"
     }
 
@@ -48,14 +48,13 @@ async def create_virtual_account(account_ref: str, account_name: str) -> dict:
             json={
                 "accountRef": account_ref,
                 "accountName": account_name,
-                "currency": "NGN"
+                "currency": "NGN",
+                "accountId":settings.NOMBA_SUB_ACCOUNT_ID
             }
         )
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"Nomba VA creation failed [{response.status_code}]: {response.text}"
-            )
+        response.raise_for_status()
         return response.json()["data"]
+        
 
 
 async def lookup_bank_account(account_number: str, bank_code: str) -> dict:
