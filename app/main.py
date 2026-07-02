@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from app.database import engine, Base
+from fastapi import FastAPI, Depends, Request
+from app.database import engine, Base, get_db
 from app.models import models
-from app.api.endpoints import router as deals_router
+from app.api.endpoints import router as deals_router, receive_webhook
+from sqlalchemy.ext.asyncio import AsyncSession
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -26,3 +27,8 @@ app.include_router(deals_router)
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "EscrowPay"}
+
+
+@app.post("/webhook")
+async def webhook_alias(request: Request, db:AsyncSession=Depends(get_db)):
+    return await receive_webhook(request, db)
