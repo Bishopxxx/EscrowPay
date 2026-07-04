@@ -105,66 +105,129 @@ async def raise_dispute(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     return {"message": "Dispute raised. Funds are frozen.", "deal_id": str(deal_id)}
 
 
+# @router.post("/webhook", tags=["Webhook"])
+# async def receive_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+#     payload = await request.body()
+
+#     # Step 1: Verify HMAC signature
+#     signature = request.headers.get("nomba-signature", "")
+#     if not verify_signature(payload, signature):
+#         raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+#     try:
+#         event = json.loads(payload)
+#     except json.JSONDecodeError:
+#         raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+#     event_type = event.get("event", "")
+
+#     # Step 2: Only process payment success events
+#     if event_type != "payment_success":
+#         return {"received": True}
+
+#     data = event.get("data", {})
+#     nomba_tx_id = data.get("transactionId") or data.get("requestId")
+#     virtual_account_number = data.get("aliasAccountNumber") or data.get("destinationAccount")
+#     amount = Decimal(str(data.get("amount", 0)))
+
+#     # Step 3: Idempotency check — have we already processed this transaction?
+#     existing = await db.execute(
+#         select(Transaction).filter(Transaction.nomba_transaction_id == nomba_tx_id)
+#     )
+#     if existing.scalar_one_or_none():
+#         # Already processed — return 200 silently
+#         return {"received": True}
+
+#     # Step 4: Find the deal by virtual account number
+#     result = await db.execute(
+#         select(Deal).filter(Deal.virtual_account_number == virtual_account_number)
+#     )
+#     deal = result.scalar_one_or_none()
+
+#     if not deal:
+#         # No matching deal — log and return 200 (don't crash, Nomba will retry on non-200)
+#         return {"received": True, "warning": "No deal found for this virtual account"}
+
+#     # Step 5: Create a transaction record
+#     transaction = Transaction(
+#         deal_id=deal.id,
+#         amount=amount,
+#         direction=TransactionDirection.INBOUND,
+#         status=TransactionStatus.SUCCESS,
+#         nomba_transaction_id=nomba_tx_id
+#     )
+#     db.add(transaction)
+
+#     # Step 6: Update funded_amount — add to existing, don't replace
+#     deal.funded_amount = (deal.funded_amount or Decimal("0")) + amount
+
+#     # Step 7: Flip status if fully funded
+#     if deal.funded_amount >= deal.amount:
+#         deal.status = DealStatus.FUNDED
+#     # If underfunded, status stays CREATED — partial payment logged but deal not yet active
+
+#     await db.commit()
+#     return {"received": True}
+
+
+
 @router.post("/webhook", tags=["Webhook"])
 async def receive_webhook(request: Request, db: AsyncSession = Depends(get_db)):
-    payload = await request.body()
-
-    # Step 1: Verify HMAC signature
-    signature = request.headers.get("nomba-signature", "")
-    if not verify_signature(payload, signature):
-        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    payload_bytes = await request.body()
+    headers = dict(request.headers)
 
     try:
-        event = json.loads(payload)
+        event = json.loads(payload_bytes)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    event_type = event.get("event", "")
+    # Verify signature using parsed payload + headers
+    if not verify_signature(event, headers):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
-    # Step 2: Only process payment success events
-    if event_type != "payment_success":
+    event_type = event.get("event_type", "")
+    if event_type != "transaction.success":
         return {"received": True}
 
     data = event.get("data", {})
-    nomba_tx_id = data.get("transactionId") or data.get("requestId")
-    virtual_account_number = data.get("aliasAccountNumber") or data.get("destinationAccount")
-    amount = Decimal(str(data.get("amount", 0)))
+    transaction = data.get("transaction", {})
+    merchant = data.get("merchant", {})
 
-    # Step 3: Idempotency check — have we already processed this transaction?
+    nomba_tx_id = transaction.get("transactionId")
+    virtual_account_number = merchant.get("walletId")
+    amount = Decimal(str(transaction.get("amount", 0)))
+
+    # Idempotency check
     existing = await db.execute(
         select(Transaction).filter(Transaction.nomba_transaction_id == nomba_tx_id)
     )
     if existing.scalar_one_or_none():
-        # Already processed — return 200 silently
         return {"received": True}
 
-    # Step 4: Find the deal by virtual account number
+    # Find deal
     result = await db.execute(
         select(Deal).filter(Deal.virtual_account_number == virtual_account_number)
     )
     deal = result.scalar_one_or_none()
 
     if not deal:
-        # No matching deal — log and return 200 (don't crash, Nomba will retry on non-200)
         return {"received": True, "warning": "No deal found for this virtual account"}
 
-    # Step 5: Create a transaction record
-    transaction = Transaction(
+    # Create transaction record
+    txn = Transaction(
         deal_id=deal.id,
         amount=amount,
         direction=TransactionDirection.INBOUND,
         status=TransactionStatus.SUCCESS,
         nomba_transaction_id=nomba_tx_id
     )
-    db.add(transaction)
+    db.add(txn)
 
-    # Step 6: Update funded_amount — add to existing, don't replace
+    # Update funded amount
     deal.funded_amount = (deal.funded_amount or Decimal("0")) + amount
 
-    # Step 7: Flip status if fully funded
     if deal.funded_amount >= deal.amount:
         deal.status = DealStatus.FUNDED
-    # If underfunded, status stays CREATED — partial payment logged but deal not yet active
 
     await db.commit()
     return {"received": True}
