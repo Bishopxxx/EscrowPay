@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import json
 import uuid
 from datetime import datetime, timedelta
@@ -47,7 +45,7 @@ async def create_frictionless_deal(payload: DealCreate, db: AsyncSession = Depen
         originator=payload.originator,
         virtual_account_number=v_account,
         status=DealStatus.CREATED,
-        expires_at=datetime.utcnow() + timedelta(hours=48)
+        expires_at=datetime.utcnow() + timedelta(hours=payload.expiry_hours)
     )
 
     if payload.originator == DealOriginator.BUYER:

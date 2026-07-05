@@ -4,6 +4,7 @@ from app.database import engine, Base, get_db
 from app.models import models
 from app.api.endpoints import router as deals_router, receive_webhook
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.jobs import scheduler, auto_release_expired_deals
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,3 +33,19 @@ def health():
 @app.post("/webhook")
 async def webhook_alias(request: Request, db:AsyncSession=Depends(get_db)):
     return await receive_webhook(request, db)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    
+    # Start the scheduler
+    scheduler.add_job(auto_release_expired_deals, "interval", hours=1)
+    scheduler.start()
+    
+    yield
+    
+    # Shutdown scheduler cleanly
+    scheduler.shutdown()
+    await engine.dispose()

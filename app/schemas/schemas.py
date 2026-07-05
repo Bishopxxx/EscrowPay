@@ -37,6 +37,7 @@ class DealCreate(BaseModel):
 
     # Who is creating this
     originator: DealOriginator
+    expiry_hours: int = Field(default =72, ge=1, le=720)
 
 
 class DealOut(BaseModel):
