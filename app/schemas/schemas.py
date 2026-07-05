@@ -66,3 +66,10 @@ class TransactionOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DealJoin(BaseModel):
+    joiner_name: str = Field(..., min_length=2, max_length=100)
+    joiner_email: EmailStr
+    joiner_bank_account_number: str = Field(..., min_length=10, max_length=10)
+    joiner_bank_code: str = Field(..., min_length=3, max_length=10)
