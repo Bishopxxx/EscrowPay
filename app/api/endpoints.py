@@ -12,7 +12,7 @@ from app.core.security import verify_signature
 from app.database import get_db
 from app.models.models import Deal, DealOriginator, DealStatus, Transaction, TransactionDirection, TransactionStatus, User
 from app.schemas.schemas import DealCreate, DealOut
-from app.services.nomba import create_virtual_account
+from app.services.nomba import create_virtual_account, verify_and_transfer
 
 router = APIRouter(prefix="/api/deals", tags=["Deals"])
 
@@ -75,19 +75,54 @@ async def get_deal(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 async def confirm_receipt(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Deal).filter(Deal.id == deal_id))
     deal = result.scalar_one_or_none()
-
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     if deal.status != DealStatus.FUNDED:
         raise HTTPException(status_code=400, detail=f"Deal cannot be confirmed in status {deal.status.value}")
 
+    # Fetch seller
+    seller_result = await db.execute(select(User).filter(User.id == deal.seller_id))
+    seller = seller_result.scalar_one_or_none()
+    if not seller or not seller.bank_account_number or not seller.bank_code:
+        raise HTTPException(status_code=400, detail="Seller bank details missing. Cannot process payout.")
+
+    # Generate payout reference and mark as CONFIRMED before attempting transfer
+    merchant_tx_ref = f"PAYOUT-{uuid.uuid4().hex[:8].upper()}"
     deal.status = DealStatus.CONFIRMED
+    deal.merchant_tx_ref = merchant_tx_ref
+    await db.flush()
+
+    # Attempt payout
+    try:
+        transfer_response = await verify_and_transfer(
+            seller_name=seller.name,
+            amount=float(deal.amount),
+            account_number=seller.bank_account_number,
+            bank_code=seller.bank_code,
+            merchant_tx_ref=merchant_tx_ref,
+            narration=f"Escrow Payout: {deal.description[:20]}"
+        )
+        nomba_ref = transfer_response.get("id") or transfer_response.get("reference") or merchant_tx_ref
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=502, detail=f"Payout failed: {str(e)}")
+
+    # Log outbound transaction as PENDING (confirmed by payout_success webhook later)
+    outbound_txn = Transaction(
+        deal_id=deal.id,
+        amount=deal.amount,
+        direction=TransactionDirection.OUTBOUND,
+        status=TransactionStatus.PENDING,
+        nomba_transaction_id=nomba_ref
+    )
+    db.add(outbound_txn)
+
+    # Mark as RELEASED synchronously for demo purposes
+    deal.status = DealStatus.RELEASED
     await db.commit()
     await db.refresh(deal)
 
-    # TODO: trigger payout to seller via verify_and_transfer()
-    return {"message": "Receipt confirmed. Payout will be initiated.", "deal_id": str(deal_id)}
-
+    return {"message": "Receipt confirmed and funds released.", "deal_id": str(deal_id), "payout_ref": nomba_ref}
 
 @router.post("/{deal_id}/dispute")
 async def raise_dispute(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
