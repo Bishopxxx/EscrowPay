@@ -32,12 +32,3 @@ def verify_signature(payload: dict, headers: dict) -> bool:
         return False
     
 
-
-
-# def verify_signature(payload: bytes, signature:str) -> bool:
-#     expected = hmac.new(
-#         settings.NOMBA_WEBHOOK_SECRET.encode(),
-#         payload,
-#         hashlib.sha256
-#     ).hexdigest()
-#     return hmac.compare_digest(expected, signature)
