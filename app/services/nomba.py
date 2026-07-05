@@ -43,19 +43,17 @@ async def get_headers() -> dict:
 async def create_virtual_account(account_ref: str, account_name: str) -> dict:
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"{BASE_URL}/v1/accounts/virtual",
+            f"{BASE_URL}/v1/accounts/virtual/{settings.NOMBA_SUB_ACCOUNT_ID}",
             headers=await get_headers(),
             json={
                 "accountRef": account_ref,
                 "accountName": account_name,
-                "currency": "NGN",
-                "accountId":settings.NOMBA_SUB_ACCOUNT_ID
+                "currency": "NGN"
             }
         )
         response.raise_for_status()
         data = response.json()
-        print(f"VA response:{data}")
-        return data.get("data",{})        
+        return data.get("data", {})     
 
 
 async def lookup_bank_account(account_number: str, bank_code: str) -> dict:
