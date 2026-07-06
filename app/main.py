@@ -6,24 +6,31 @@ from app.api.endpoints import router as deals_router, receive_webhook
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.jobs import scheduler, auto_release_expired_deals
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Runs when the server starts
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
-    yield # The app handles requests here
-    
+
+    scheduler.add_job(auto_release_expired_deals, "interval", hours=1)
+    scheduler.start()
+
+    yield  # App handles requests here
+
     # Runs when the server shuts down
+    scheduler.shutdown()
     await engine.dispose()
 
+
 app = FastAPI(
-    title="EscrowPay", 
+    title="EscrowPay",
     version="0.1.0",
     lifespan=lifespan
 )
 
 app.include_router(deals_router)
+
 
 @app.get("/health")
 def health():
@@ -31,21 +38,5 @@ def health():
 
 
 @app.post("/webhook")
-async def webhook_alias(request: Request, db:AsyncSession=Depends(get_db)):
+async def webhook_alias(request: Request, db: AsyncSession = Depends(get_db)):
     return await receive_webhook(request, db)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    
-    # Start the scheduler
-    scheduler.add_job(auto_release_expired_deals, "interval", hours=1)
-    scheduler.start()
-    
-    yield
-    
-    # Shutdown scheduler cleanly
-    scheduler.shutdown()
-    await engine.dispose()
