@@ -5,11 +5,10 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from app.core.config import settings
 from app.core.security import verify_signature
 from app.database import get_db
 from app.models.models import Deal, DealOriginator, DealStatus, Transaction, TransactionDirection, TransactionStatus, User
-from app.schemas.schemas import DealCreate, DealOut, DealJoin
+from app.schemas.schemas import DealCreate, DealOut, DealJoin, TransactionOut
 from app.services.nomba import create_virtual_account, verify_and_transfer
 
 router = APIRouter(prefix="/api/deals", tags=["Deals"])
@@ -54,7 +53,6 @@ async def create_frictionless_deal(payload: DealCreate, db: AsyncSession = Depen
         new_deal.seller_id = user.id
 
     db.add(new_deal)
-    # TODO: if commit fails after VA creation, log account_ref for manual reconciliation
     await db.commit()
     await db.refresh(new_deal)
     return new_deal
@@ -127,6 +125,25 @@ async def get_deal(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     return deal
+
+@router.get("/{deal_id}/transactions", response_model=list[TransactionOut])
+async def get_deal_transactions(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    # 1. Verify the deal exists
+    deal_result = await db.execute(select(Deal).filter(Deal.id == deal_id))
+    deal = deal_result.scalar_one_or_none()
+    
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+        
+    # 2. Fetch all transactions for this deal, newest first
+    result = await db.execute(
+        select(Transaction)
+        .filter(Transaction.deal_id == deal_id)
+        .order_by(Transaction.created_at.desc())
+    )
+    transactions = result.scalars().all()
+    
+    return transactions
 
 @router.post("/{deal_id}/join", response_model=DealOut)
 async def join_deal(deal_id: uuid.UUID, payload: DealJoin, db: AsyncSession = Depends(get_db)):
@@ -235,3 +252,79 @@ async def raise_dispute(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(deal)
     return {"message": "Dispute raised. Funds are frozen.", "deal_id": str(deal_id)}
+
+@router.post("/{deal_id}/cancel")
+async def cancel_deal(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    # 1. Fetch the deal
+    result = await db.execute(select(Deal).filter(Deal.id == deal_id))
+    deal = result.scalar_one_or_none()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    # 2. CREATED — no money involved, just cancel
+    if deal.status == DealStatus.CREATED:
+        deal.status = DealStatus.CANCELLED
+        await db.commit()
+        await db.refresh(deal)
+        return {"message": "Deal cancelled successfully.", "deal_id": str(deal_id)}
+
+    # 3. FUNDED — money has landed, need to refund buyer
+    if deal.status == DealStatus.FUNDED:
+        if not deal.buyer_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Buyer has not registered their bank details. Ask the buyer to join the deal before cancelling."
+            )
+
+        buyer_result = await db.execute(select(User).filter(User.id == deal.buyer_id))
+        buyer = buyer_result.scalar_one_or_none()
+
+        if not buyer or not buyer.bank_account_number or not buyer.bank_code:
+            raise HTTPException(
+                status_code=400,
+                detail="Buyer bank details are incomplete. Cannot process refund."
+            )
+
+        merchant_tx_ref = f"REFUND-{uuid.uuid4().hex[:8].upper()}"
+        deal.status = DealStatus.CANCELLED
+        deal.merchant_tx_ref = merchant_tx_ref
+        await db.flush()
+
+        try:
+            transfer_response = await verify_and_transfer(
+                seller_name=buyer.name,
+                amount=float(deal.funded_amount),
+                account_number=buyer.bank_account_number,
+                bank_code=buyer.bank_code,
+                merchant_tx_ref=merchant_tx_ref,
+                narration=f"Refund: {deal.description[:20]}"
+            )
+            nomba_ref = transfer_response.get("id") or transfer_response.get("reference") or merchant_tx_ref
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=502, detail=f"Refund transfer failed: {str(e)}")
+
+        refund_txn = Transaction(
+            deal_id=deal.id,
+            amount=deal.funded_amount,
+            direction=TransactionDirection.OUTBOUND,
+            status=TransactionStatus.PENDING,
+            nomba_transaction_id=nomba_ref
+        )
+        db.add(refund_txn)
+        deal.status = DealStatus.REFUNDED
+        await db.commit()
+        await db.refresh(deal)
+
+        return {
+            "message": "Deal cancelled and refund initiated to buyer.",
+            "deal_id": str(deal_id),
+            "refund_ref": nomba_ref,
+            "refunded_amount": str(deal.funded_amount)
+        }
+
+    # 4. Any other status — block cancellation
+    raise HTTPException(
+        status_code=400,
+        detail=f"Cannot cancel deal in status {deal.status.value}. Only CREATED or FUNDED deals can be cancelled."
+    )
