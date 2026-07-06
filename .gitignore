@@ -5,3 +5,7 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+escrowpay-frontend/node_modules/
+escrowpay-frontend/.next/
+escrowpay-frontend/.env.local

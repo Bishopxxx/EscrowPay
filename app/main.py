@@ -5,7 +5,7 @@ from app.models import models
 from app.api.endpoints import router as deals_router, receive_webhook
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.jobs import scheduler, auto_release_expired_deals
-
+from fastapi.middleware.cors import CORSMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,6 +31,13 @@ app = FastAPI(
 
 app.include_router(deals_router)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/health")
 def health():
