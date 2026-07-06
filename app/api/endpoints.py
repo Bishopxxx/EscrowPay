@@ -57,11 +57,13 @@ async def create_frictionless_deal(payload: DealCreate, db: AsyncSession = Depen
     await db.refresh(new_deal)
     return new_deal
 
+
 @router.get("/", response_model=list[DealOut])
 async def get_all_deals(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Deal).order_by(Deal.created_at.desc()))
     deals = result.scalars().all()
     return deals
+
 
 @router.post("/webhook", tags=["Webhook"])
 async def receive_webhook(request: Request, db: AsyncSession = Depends(get_db)):
