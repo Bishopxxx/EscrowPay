@@ -58,6 +58,16 @@ async def create_frictionless_deal(payload: DealCreate, db: AsyncSession = Depen
     return new_deal
 
 
+@router.get("/banks", tags=["Utilities"])
+async def list_banks():
+    from app.services.nomba import get_banks
+    try:
+        banks = await get_banks()
+        return banks
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch banks: {str(e)}")
+
+
 @router.get("/", response_model=list[DealOut])
 async def get_all_deals(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Deal).order_by(Deal.created_at.desc()))

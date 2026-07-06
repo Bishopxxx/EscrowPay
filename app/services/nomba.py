@@ -40,6 +40,16 @@ async def get_headers() -> dict:
     }
 
 
+async def get_banks() -> list:
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{BASE_URL}/v1/transfers/banks",
+            headers=await get_headers()
+        )
+        response.raise_for_status()
+        return response.json()["data"]
+
+
 async def create_virtual_account(account_ref: str, account_name: str) -> dict:
     async with httpx.AsyncClient() as client:
         response = await client.post(
