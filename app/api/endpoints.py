@@ -57,6 +57,12 @@ async def create_frictionless_deal(payload: DealCreate, db: AsyncSession = Depen
     await db.refresh(new_deal)
     return new_deal
 
+@router.get("/", response_model=list[DealOut])
+async def get_all_deals(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Deal).order_by(Deal.created_at.desc()))
+    deals = result.scalars().all()
+    return deals
+
 @router.post("/webhook", tags=["Webhook"])
 async def receive_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     payload_bytes = await request.body()
@@ -67,56 +73,81 @@ async def receive_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Verify signature using parsed payload + headers
     if not verify_signature(event, headers):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     event_type = event.get("event_type", "")
-    if event_type != "transaction.success":
-        return {"received": True}
-
     data = event.get("data", {})
     transaction = data.get("transaction", {})
     merchant = data.get("merchant", {})
 
-    nomba_tx_id = transaction.get("transactionId")
-    virtual_account_number = merchant.get("walletId")
-    amount = Decimal(str(transaction.get("amount", 0)))
+    if event_type == "transaction.success":
+        nomba_tx_id = transaction.get("transactionId")
+        virtual_account_number = merchant.get("walletId")
+        amount = Decimal(str(transaction.get("amount", 0)))
 
-    # Idempotency check
-    existing = await db.execute(
-        select(Transaction).filter(Transaction.nomba_transaction_id == nomba_tx_id)
-    )
-    if existing.scalar_one_or_none():
-        return {"received": True}
+        existing = await db.execute(
+            select(Transaction).filter(Transaction.nomba_transaction_id == nomba_tx_id)
+        )
+        if existing.scalar_one_or_none():
+            return {"received": True}
 
-    # Find deal
-    result = await db.execute(
-        select(Deal).filter(Deal.virtual_account_number == virtual_account_number)
-    )
-    deal = result.scalar_one_or_none()
+        result = await db.execute(
+            select(Deal).filter(Deal.virtual_account_number == virtual_account_number)
+        )
+        deal = result.scalar_one_or_none()
 
-    if not deal:
-        return {"received": True, "warning": "No deal found for this virtual account"}
+        if not deal:
+            return {"received": True, "warning": "No deal found for this virtual account"}
 
-    # Create transaction record
-    txn = Transaction(
-        deal_id=deal.id,
-        amount=amount,
-        direction=TransactionDirection.INBOUND,
-        status=TransactionStatus.SUCCESS,
-        nomba_transaction_id=nomba_tx_id
-    )
-    db.add(txn)
+        txn = Transaction(
+            deal_id=deal.id,
+            amount=amount,
+            direction=TransactionDirection.INBOUND,
+            status=TransactionStatus.SUCCESS,
+            nomba_transaction_id=nomba_tx_id
+        )
+        db.add(txn)
 
-    # Update funded amount
-    deal.funded_amount = (deal.funded_amount or Decimal("0")) + amount
+        deal.funded_amount = (deal.funded_amount or Decimal("0")) + amount
 
-    if deal.funded_amount >= deal.amount:
-        deal.status = DealStatus.FUNDED
+        if deal.funded_amount >= deal.amount:
+            deal.status = DealStatus.FUNDED
 
-    await db.commit()
+        await db.commit()
+
+    elif event_type == "payout_success":
+        merchant_tx_ref = transaction.get("merchantTxRef") or transaction.get("transactionId")
+
+        if merchant_tx_ref:
+            txn_result = await db.execute(
+                select(Transaction).filter(Transaction.nomba_transaction_id == merchant_tx_ref)
+            )
+            txn = txn_result.scalar_one_or_none()
+            if txn:
+                txn.status = TransactionStatus.SUCCESS
+                await db.commit()
+
+    elif event_type == "payout_failed":
+        merchant_tx_ref = transaction.get("merchantTxRef") or transaction.get("transactionId")
+
+        if merchant_tx_ref:
+            txn_result = await db.execute(
+                select(Transaction).filter(Transaction.nomba_transaction_id == merchant_tx_ref)
+            )
+            txn = txn_result.scalar_one_or_none()
+            if txn:
+                txn.status = TransactionStatus.FAILED
+                deal_result = await db.execute(
+                    select(Deal).filter(Deal.id == txn.deal_id)
+                )
+                deal = deal_result.scalar_one_or_none()
+                if deal:
+                    deal.status = DealStatus.FUNDED
+                await db.commit()
+
     return {"received": True}
+
 
 @router.get("/{deal_id}", response_model=DealOut)
 async def get_deal(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
@@ -125,6 +156,7 @@ async def get_deal(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     return deal
+
 
 @router.get("/{deal_id}/transactions", response_model=list[TransactionOut])
 async def get_deal_transactions(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
@@ -144,6 +176,7 @@ async def get_deal_transactions(deal_id: uuid.UUID, db: AsyncSession = Depends(g
     transactions = result.scalars().all()
     
     return transactions
+
 
 @router.post("/{deal_id}/join", response_model=DealOut)
 async def join_deal(deal_id: uuid.UUID, payload: DealJoin, db: AsyncSession = Depends(get_db)):
@@ -185,15 +218,15 @@ async def join_deal(deal_id: uuid.UUID, payload: DealJoin, db: AsyncSession = De
     
     return deal
 
+
 @router.post("/{deal_id}/confirm")
 async def confirm_receipt(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Deal).filter(Deal.id == deal_id))
     deal = result.scalar_one_or_none()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
-    if deal.status != DealStatus.FUNDED:
+    if deal.status not in [DealStatus.FUNDED, DealStatus.SHIPPED]:
         raise HTTPException(status_code=400, detail=f"Deal cannot be confirmed in status {deal.status.value}")
-
     # Fetch seller
     seller_result = await db.execute(select(User).filter(User.id == deal.seller_id))
     seller = seller_result.scalar_one_or_none()
@@ -238,6 +271,7 @@ async def confirm_receipt(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
     return {"message": "Receipt confirmed and funds released.", "deal_id": str(deal_id), "payout_ref": nomba_ref}
 
+
 @router.post("/{deal_id}/dispute")
 async def raise_dispute(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Deal).filter(Deal.id == deal_id))
@@ -252,6 +286,7 @@ async def raise_dispute(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(deal)
     return {"message": "Dispute raised. Funds are frozen.", "deal_id": str(deal_id)}
+
 
 @router.post("/{deal_id}/cancel")
 async def cancel_deal(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
@@ -328,3 +363,32 @@ async def cancel_deal(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         status_code=400,
         detail=f"Cannot cancel deal in status {deal.status.value}. Only CREATED or FUNDED deals can be cancelled."
     )
+
+
+@router.post("/{deal_id}/ship")
+async def ship_deal(deal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    # 1. Fetch the deal
+    result = await db.execute(select(Deal).filter(Deal.id == deal_id))
+    deal = result.scalar_one_or_none()
+
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    # 2. State Machine Check: Only a FUNDED deal can be shipped
+    if deal.status != DealStatus.FUNDED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot ship deal in status {deal.status.value}. Deal must be FUNDED first."
+        )
+
+    # 3. Update status to SHIPPED
+    deal.status = DealStatus.SHIPPED
+    await db.commit()
+    await db.refresh(deal)
+
+    return {
+        "message": "Deal marked as shipped. Awaiting buyer confirmation.", 
+        "deal_id": str(deal_id)
+    }
+
+
