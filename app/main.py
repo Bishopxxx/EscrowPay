@@ -29,8 +29,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-app.include_router(deals_router)
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:3001"],
@@ -39,10 +37,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(deals_router)
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "EscrowPay"}
-
 
 @app.post("/webhook")
 async def webhook_alias(request: Request, db: AsyncSession = Depends(get_db)):
