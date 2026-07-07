@@ -31,12 +31,16 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://escrowpay-frontend.vercel.app",
+        "https://escrowpay-frontend-1wpkkzzlh-bishops-projects.vercel.app",
+        "https://escrowpay-frontend-avs763m73-bishops-projects.vercel.app"
+],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 app.include_router(deals_router)
 
 @app.get("/health")
