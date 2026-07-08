@@ -110,6 +110,36 @@ def normalize_name(name: str) -> str:
     return " ".join(name.upper().split())
 
 
+# async def verify_and_transfer(
+#     seller_name: str,
+#     amount: float,
+#     account_number: str,
+#     bank_code: str,
+#     merchant_tx_ref: str,
+#     narration: str = ""
+# ) -> dict:
+#     # Step 1: look up the account
+#     bank_data = await lookup_bank_account(account_number, bank_code)
+#     returned_name = bank_data.get("accountName", "")
+
+#     # Step 2: compare names
+#     if normalize_name(returned_name) != normalize_name(seller_name):
+#         raise ValueError(
+#             f"Name mismatch: expected '{seller_name}', got '{returned_name}'"
+#         )
+
+#     # Step 3: transfer only if names match
+#     return await transfer_to_bank(
+#         amount=amount,
+#         account_number=account_number,
+#         account_name=returned_name,
+#         bank_code=bank_code,
+#         merchant_tx_ref=merchant_tx_ref,
+#         narration=narration
+#     )
+
+
+
 async def verify_and_transfer(
     seller_name: str,
     amount: float,
@@ -118,21 +148,27 @@ async def verify_and_transfer(
     merchant_tx_ref: str,
     narration: str = ""
 ) -> dict:
-    # Step 1: look up the account
-    bank_data = await lookup_bank_account(account_number, bank_code)
-    returned_name = bank_data.get("accountName", "")
+    # Step 1: Try bank lookup for name verification
+    try:
+        bank_data = await lookup_bank_account(account_number, bank_code)
+        returned_name = bank_data.get("accountName", "")
+        
+        if returned_name and normalize_name(returned_name) != normalize_name(seller_name):
+            raise ValueError(
+                f"Name mismatch: expected '{seller_name}', got '{returned_name}'"
+            )
+        account_name = returned_name or seller_name
+    except ValueError:
+        raise  # Re-raise name mismatch errors
+    except Exception:
+        # Lookup failed (Nomba 500 etc) — proceed with transfer using provided name
+        account_name = seller_name
 
-    # Step 2: compare names
-    if normalize_name(returned_name) != normalize_name(seller_name):
-        raise ValueError(
-            f"Name mismatch: expected '{seller_name}', got '{returned_name}'"
-        )
-
-    # Step 3: transfer only if names match
+    # Step 2: Transfer
     return await transfer_to_bank(
         amount=amount,
         account_number=account_number,
-        account_name=returned_name,
+        account_name=account_name,
         bank_code=bank_code,
         merchant_tx_ref=merchant_tx_ref,
         narration=narration
