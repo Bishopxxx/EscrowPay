@@ -11,6 +11,8 @@ EscrowPay is a modern, frictionless escrow backend built with FastAPI. It secure
 - Smart Payouts: Features strict bank-account name validation before releasing funds to the seller, ensuring money only goes to the right person.
 - Auto-Release Timeout: Funds automatically release to the seller after a configurable window (default 72 hours) if the buyer doesn't confirm or dispute.
 - Dispute Protection: Either party can freeze funds at any point before release.
+- Partial Payment Handling: Funded amount accumulates across multiple transfers — deal only activates when fully funded.
+
 
 ## 🛠️ Tech Stack
 
@@ -18,6 +20,7 @@ EscrowPay is a modern, frictionless escrow backend built with FastAPI. It secure
 - Database:PostgreSQL with Async SQLAlchemy & asyncpg
 - Validation:Pydantic
 - Background Jobs:APScheduler (auto-release timeout)
+- Frontend:Next.js (App Router), Tailwind CSS
 - Integrations:Nomba API (Virtual Accounts, Transfers, Webhooks)
 - Deployment:Railway
 
@@ -26,32 +29,34 @@ EscrowPay is a modern, frictionless escrow backend built with FastAPI. It secure
 | Method |  Endpoint     | Description |
 |--------|---------------|-------------|
 | `POST` | `/api/deals/` | Create a new escrow deal (provisions a Nomba virtual account) |
-| `POST` | `/api/deals/webhook` | Nomba webhook receiver — detects payments, updates deal status |
+| `GET` | `/api/deals/` | List all deals|
+| `GET` | `/api/deals/banks` | List supported banks with codes|
+| `POST` | `/api/deals/webhook` | Nomba webhook receiver; detects payments, updates deal status |
 | `GET` | `/api/deals/{deal_id}` | Get real-time deal status |
-| `POST` | `/api/deals/{deal_id}/join` | Second party joins the deal with their bank details |
+| `GET` | `/api/deals/{deal_id}/transactions` | Get transaction history for a deal |
+| `POST` | `/api/deals/{deal_id}/ship` | Seller marks items as shipped|
 | `POST` | `/api/deals/{deal_id}/confirm` | Buyer confirms receipt — triggers payout to seller |
 | `POST` | `/api/deals/{deal_id}/dispute` | Raise a dispute — freezes funds |
+| `POST` | `/api/deals/{deal_id}/cancel` | Cancel deal - refunds buyer if already funded|
 | `GET` | `/health` | Health check |
 | `POST` | `/webhook` | Webhook alias |
 
 ## 🔄 Deal State Machine
 
-CREATED → FUNDED → CONFIRMED → RELEASED
+CREATED → FUNDED → SHIPPED → CONFIRMED → RELEASED
 ↘ DISPUTED (funds frozen)
 ↘ EXPIRED (auto-released to seller)
 CREATED → CANCELLED
 FUNDED → REFUNDED
 
 
-
 ## 🌐 Live Demo
 
-  API Documentation (Swagger UI):  
-    https://escrowpay-production-5728.up.railway.app/docs
+Frontend: https://escrowpay-frontend.vercel.app
 
-  Health Check:  
-    https://escrowpay-production-5728.up.railway.app/health
+API Documentation (Swagger UI): https://escrowpay-production-5728.up.railway.app/docs
 
+Health Check: https://escrowpay-production-5728.up.railway.app/health
 
 ## ⚙️ Getting Started
 
@@ -89,20 +94,29 @@ The app automatically creates database tables on startup.
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 4. Explore the API
+### 4. Frontend
 
-👉   http://localhost:8000/docs  
+```bash
+cd escrowpay-frontend
+npm install
+npm run dev
+```
+
+### 5. Explore the API
+
+👉 http://localhost:8000/docs
 
 ## 🧪 Demo Flow
 
-1. `POST /api/deals/` — Seller creates a deal, gets a virtual account number
-2. Share the deal ID with the buyer
-3. `POST /api/deals/{deal_id}/join` — Buyer joins with their details
-4. Buyer transfers funds to the virtual account number
+1. Go to https://escrowpay-frontend.vercel.app/create — seller creates a deal, gets a unique virtual account number
+2. Seller copies the deal link and sends it to the buyer
+3. Buyer opens the link, enters their bank details, and joins the deal
+4. Buyer transfers funds to the Nomba virtual account number
 5. Nomba fires a `transaction.success` webhook → deal flips to `FUNDED`
-6. `POST /api/deals/{deal_id}/confirm` — Buyer confirms receipt → funds released to seller
-7. `GET /api/deals/{deal_id}` — Check deal status at any point
+6. Seller marks item as shipped → deal flips to `SHIPPED`
+7. Buyer confirms receipt → funds released to seller → deal flips to `RELEASED`
+8. Either party can raise a dispute at any point to freeze funds
 
 ---
 
-*Built for the DevCareer x Nomba Hackathon 2026*
+*Built for the DevCareer x Nomba Hackathon 2026 — Virtual Accounts as Infrastructure track*
