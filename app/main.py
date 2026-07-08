@@ -50,3 +50,9 @@ def health():
 @app.post("/webhook")
 async def webhook_alias(request: Request, db: AsyncSession = Depends(get_db)):
     return await receive_webhook(request, db)
+
+
+
+
+
+

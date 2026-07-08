@@ -2,6 +2,7 @@ from uuid import UUID
 from decimal import Decimal
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
+from typing import Optional 
 from app.models.models import DealOriginator, DealStatus, TransactionStatus, TransactionDirection
 
 
@@ -48,6 +49,9 @@ class DealOut(BaseModel):
     status: DealStatus
     virtual_account_number: str | None
     originator: DealOriginator
+    buyer_id: Optional[UUID] = None
+    seller_id: Optional[UUID] = None
+    
 
     class Config:
         from_attributes = True
